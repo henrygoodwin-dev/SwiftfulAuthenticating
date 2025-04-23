@@ -5,26 +5,26 @@ import Foundation
 public class AuthManager {
     private let logger: AuthLogger?
     private let service: AuthService
-
+    
     public private(set) var auth: UserAuthInfo?
     private var taskListener: Task<Void, Error>?
-
+    
     public init(service: AuthService, logger: AuthLogger? = nil) {
         self.service = service
         self.logger = logger
         self.auth = service.getAuthenticatedUser()
         self.addAuthListener()
     }
-
+    
     public func getAuthId() throws -> String {
         guard let uid = auth?.uid else {
             throw AuthError.notSignedIn
         }
-
+        
         return uid
     }
-
-    private func addAuthListener() {        
+    
+    private func addAuthListener() {
         // Attach new listener
         taskListener?.cancel()
         taskListener = Task {
@@ -36,7 +36,7 @@ public class AuthManager {
     
     private func setCurrentAuth(auth value: UserAuthInfo?) {
         self.auth = value
-
+        
         if let value {
             self.logger?.identifyUser(userId: value.uid, name: value.displayName, email: value.email)
             self.logger?.addUserProperties(dict: value.eventParameters, isHighPriority: true)
@@ -62,7 +62,23 @@ public class AuthManager {
     public func signInGoogle(GIDClientID: String) async throws -> (user: UserAuthInfo, isNewUser: Bool) {
         try await signIn(option: .google(GIDClientID: GIDClientID))
     }
-
+    
+    @discardableResult
+    public func signInEmailLink_Start(email: String, signInLinkURL: String) async throws {
+        try await signIn(option: .emailLink(email: email, signInLinkURL: signInLinkURL))
+    }
+    
+    @discardableResult
+    public func signInEmailLink_Verify(url: URL) async throws -> (user: UserAuthInfo, isNewUser: Bool) {
+        try await signIn(option: .emailLinkVerify(url: url))
+    }
+    
+    // Email password authentication
+    @discardableResult
+    public func signInWithEmailPassword(email: String, password: String) async throws -> (user: UserAuthInfo, isNewUser: Bool) {
+        try await signIn(option: .emailPassword(email: email, password: password))
+    }
+    
     private func signIn(option: SignInOption) async throws -> (user: UserAuthInfo, isNewUser: Bool) {
         self.logger?.trackEvent(event: Event.signInStart(option: option))
         
@@ -73,7 +89,7 @@ public class AuthManager {
             // Re-adding a new listener should catch any catch edge cases.
             addAuthListener()
         }
-
+        
         do {
             let result = try await service.signIn(option: option)
             setCurrentAuth(auth: result.user)
@@ -84,10 +100,10 @@ public class AuthManager {
             throw error
         }
     }
-
+    
     public func signOut() throws {
         self.logger?.trackEvent(event: Event.signOutStart)
-
+        
         do {
             try service.signOut()
             auth = nil
@@ -97,10 +113,10 @@ public class AuthManager {
             throw error
         }
     }
-
+    
     public func deleteAccount() async throws {
         self.logger?.trackEvent(event: Event.deleteAccountStart)
-
+        
         do {
             try await service.deleteAccount()
             auth = nil
@@ -110,11 +126,11 @@ public class AuthManager {
             throw error
         }
     }
-
+    
     public enum AuthError: Error {
         case notSignedIn
     }
-
+    
 }
 
 extension AuthManager {
@@ -130,7 +146,18 @@ extension AuthManager {
         case deleteAccountStart
         case deleteAccountSuccess
         case deleteAccountFail(error: Error)
-
+        
+        case signInEmailStart(email: String)
+        case signInEmailSuccess(email: String)
+        case signInEmailFail(error: Error)
+        case signInEmailVerifyStart
+        case signInEmailVerifySuccess(user: UserAuthInfo, isNewUser: Bool)
+        case signInEmailVerifyFail(error: Error)
+        case signInEmailPasswordStart(email: String)
+        case signInEmailPasswordSuccess(user: UserAuthInfo, isNewUser: Bool)
+        case signInEmailPasswordFail(error: Error)
+        
+        
         var eventName: String {
             switch self {
             case .authListenerSuccess: return         "Auth_Listener_Success"
@@ -144,9 +171,19 @@ extension AuthManager {
             case .deleteAccountStart: return          "Auth_DeleteAccount_Start"
             case .deleteAccountSuccess: return        "Auth_DeleteAccount_Success"
             case .deleteAccountFail: return           "Auth_DeleteAccount_Fail"
+                
+            case .signInEmailStart: return          "Auth_SignInEmail_Start"
+            case .signInEmailSuccess: return        "Auth_SignInEmail_Success"
+            case .signInEmailFail: return           "Auth_SignInEmail_Fail"
+            case .signInEmailVerifyStart: return    "Auth_SignInEmail_Verify_Start"
+            case .signInEmailVerifySuccess: return  "Auth_SignInEmail_Verify_Success"
+            case .signInEmailVerifyFail: return     "Auth_SignInEmail_Verify_Fail"
+            case .signInEmailPasswordStart: return  "Auth_SignInEmailPassword_Start"
+            case .signInEmailPasswordSuccess: return "Auth_SignInEmailPassword_Success"
+            case .signInEmailPasswordFail: return   "Auth_SignInEmailPassword_Fail"
             }
         }
-
+        
         var parameters: [String: Any]? {
             switch self {
             case .authListenerSuccess(user: let user):
@@ -160,17 +197,35 @@ extension AuthManager {
                 return dict
             case .signInFail(error: let error), .signOutFail(error: let error), .deleteAccountFail(error: let error):
                 return error.eventParameters
+                
+            case .signInEmailStart(email: let email),
+                    .signInEmailSuccess(email: let email),
+                    .signInEmailPasswordStart(email: let email):
+                return ["email": email]
+            case .signInEmailFail(error: let error),
+                    .signInEmailVerifyFail(error: let error),
+                    .signInEmailPasswordFail(error: let error):
+                return error.eventParameters
+            case .signInEmailVerifySuccess(user: let user, isNewUser: let isNewUser),
+                    .signInEmailPasswordSuccess(user: let user, isNewUser: let isNewUser):
+                var dict = user.eventParameters
+                dict["is_new_user"] = isNewUser
+                return dict
+            case .signInEmailVerifyStart:
+                return nil
             default:
                 return nil
             }
         }
-
+        
         var type: AuthLogType {
             switch self {
             case .signInFail, .signOutFail, .deleteAccountFail:
                 return .severe
             case .authlistenerEmpty:
                 return .warning
+            case .signInEmailFail, .signInEmailVerifyFail, .signInEmailPasswordFail:
+                return .severe
             default:
                 return .info
             }

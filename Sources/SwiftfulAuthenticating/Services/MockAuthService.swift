@@ -42,6 +42,18 @@ public class MockAuthService: AuthService {
             let user = UserAuthInfo.mock(isAnonymous: false)
             currentUser = user
             return (user, false)
+        case .emailLink(email: let email, signInLinkURL: let signInLinkURL):
+            let user = UserAuthInfo.mock(isAnonymous: false)
+            currentUser = user
+            return (user, false)
+        case .emailLinkVerify(url: let url):
+            let user = UserAuthInfo.mock(isAnonymous: false)
+            currentUser = user
+            return (user, false)
+        case .emailPassword(email: let email, password: let password):
+            let user = UserAuthInfo.mock(isAnonymous: false)
+            currentUser = user
+            return (user, false)
         }
     }
 
